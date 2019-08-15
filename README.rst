@@ -62,3 +62,7 @@ genes (bed)
   USCSTableBrowser_ (RefSeq)
 
 
+
+Improvements
+============
+* cigar strings containing DI
