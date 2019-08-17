@@ -2,23 +2,15 @@
 Convenience functions for working with the `jamescasbon/PyVCF` library.
 """
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Iterable, Tuple, List, Dict
 
-from vcf import Reader
 from vcf.model import _Record, _Call
 
 from tempus import SimpleVariant, Assembly
 
-_TEMPUS_REFERENCE__ASSEMBLY: Dict[str, Assembly] = {
+TEMPUS_REFERENCE__ASSEMBLY: Dict[str, Assembly] = {
     '/data/human_g1k_v37.fasta': Assembly.GRCH37,
 }
-
-
-def assembly_from_vcf(vcf_path: Path) -> Assembly:
-    with vcf_path.open() as vcf_io:
-        reader = Reader(vcf_io)
-    return _TEMPUS_REFERENCE__ASSEMBLY[reader.metadata['reference']]
 
 
 def simple_variants_from_record(record: _Record) -> Iterable[Tuple[int, SimpleVariant]]:
@@ -59,6 +51,7 @@ class VcfVariantAnnotation:
     pos: int
     ref: str
     alt: List[str]
+    allele_index: int
     read_depth_site: int
     read_depth_alt: int
     perc_reads_alt: float
@@ -74,6 +67,7 @@ def annotate_variant_vcf(record: _Record, allele_index: int) -> VcfVariantAnnota
         pos=record.POS,
         ref=record.REF,
         alt=list(map(str, record.ALT)),
+        allele_index=allele_index,
         read_depth_site=record.INFO['DP'],
         read_depth_alt=read_depth_alt,
         perc_reads_alt=float(read_depth_alt) / read_depth_ref,

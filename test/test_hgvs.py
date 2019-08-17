@@ -1,12 +1,12 @@
 import pytest
 
 from tempus import Assembly, SimpleVariant
-from tempus.hgvs import HgvsMachinery, hgvs_from_simple_variant, machinery_for_assembly, simple_variant_from_hgvs
+from tempus.hgvs import HgvsMachinery
 
 
 @pytest.fixture(scope='module')
 def hgvs_machinery() -> HgvsMachinery:
-    return machinery_for_assembly(Assembly.GRCH37)
+    return HgvsMachinery.from_assembly(Assembly.GRCH37)
 
 
 @pytest.mark.parametrize('variant, hgvs_g_str', [
@@ -19,8 +19,8 @@ def test_hgvs_simple_variant_conversions(hgvs_machinery: HgvsMachinery, variant:
     """
     Note: hgvs is not normalized.
     """
-    hgvs_g = hgvs_from_simple_variant(hgvs_machinery, variant, vtype='g')
+    hgvs_g = hgvs_machinery.hgvs_from_simple_variant(variant, vtype='g')
     assert str(hgvs_g) == hgvs_g_str
 
-    _variant = simple_variant_from_hgvs(hgvs_machinery, hgvs_g)
+    _variant = hgvs_machinery.simple_variant_from_hgvs(hgvs_g)
     assert _variant == variant

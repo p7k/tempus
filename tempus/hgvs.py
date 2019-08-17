@@ -55,6 +55,11 @@ class HgvsMachinery:
             contig__accession={contig: acc for acc, contig in accession__contig.items()})
 
     def hgvs_from_simple_variant(self, variant: SimpleVariant, vtype: str) -> SequenceVariant:
+        """
+        :param variant: simple variant.
+        :param vtype: variant type (see HGVS variant types :: 'g', 'c', 'p', 'n')
+        :return: hgvs variant.
+        """
         return SequenceVariant(
             ac=self.contig__accession[variant.contig],
             type=vtype,
@@ -62,7 +67,13 @@ class HgvsMachinery:
                 pos=Interval(start=SimplePosition(variant.pos), end=SimplePosition(variant.pos + len(variant.ref) - 1)),
                 edit=NARefAlt(ref=variant.ref, alt=variant.alt)))
 
+    # TODO this feels over-engineered to server the desire to 5' normalize vcf variants for use with ExAC
+    # TODO test to see if such normalization truly makes a difference for ExAC
     def simple_variant_from_hgvs(self, variant: SequenceVariant) -> SimpleVariant:
+        """
+        :param variant: hgvs variant.
+        :return: simple variant.
+        """
         edit = variant.posedit.edit
         if isinstance(edit, Dup):
             alt = edit.ref_s * 2
@@ -75,11 +86,16 @@ class HgvsMachinery:
             ref=variant.posedit.edit.ref, alt=alt)
 
     def gene_from_transcripts(self, *tx_accessions: str) -> Optional[str]:
+        """
+        Gather and naively pick a gene from given transcripts.
+
+        :param tx_accessions: transcript accessions.
+        :return: gene symbol.
+        """
         candidates = {self.assembly_mapper.hdp.get_tx_identity_info(tx_ac).get("hgnc", None) for tx_ac in tx_accessions}
-        gene = next(iter(candidates), None)
         if len(candidates) > 1:
-            logging.warning(f'picking gene {gene} from many candidates: {candidates}')
-        return gene
+            logging.warning(f'picking one gene from many candidates: {candidates}')
+        return min(candidates, key=len) if candidates else None
 
 
 def variant_edit_type(variant: SequenceVariant) -> Optional[str]:
@@ -117,20 +133,6 @@ _HGVS_P_EDIT_TYPE__FEATURE_VARIANT: Dict[str, FeatureVariant] = {
 }
 
 
-@dataclass(frozen=True)
-class HgvsTranscriptAnnotation:
-    hgvs_c: Optional[SequenceVariant]
-    hgvs_p: Optional[SequenceVariant]
-    feature_variant: Optional[FeatureVariant]
-
-
-@dataclass(frozen=True)
-class HgvsVariantAnnotation(HgvsTranscriptAnnotation):
-    hgvs_g: SequenceVariant
-    sequence_alteration: SequenceAlteration
-    gene: Optional[str]
-
-
 def sequence_alteration_from_hgvs_g(hgvs_g: SequenceVariant) -> SequenceAlteration:
     return _HGVS_G_EDIT_TYPE__SEQUENCE_ALTERATION.get(
         variant_edit_type(hgvs_g), SequenceAlteration.STRUCTURAL_ALTERATION)
@@ -146,46 +148,70 @@ def feature_variant_from_hgvs_p(hgvs_p: SequenceVariant, hgvs_c: SequenceVariant
         FeatureVariant.MISSENSE if hgvs_c.posedit.length_change() % 3 == 0 else FeatureVariant.FRAMESHIFT)
 
 
-def annotate_variant_hgvs(hgvs_machinery: HgvsMachinery, variant: SimpleVariant) -> HgvsVariantAnnotation:
-    def annotate_transcript(tx_ac: str) -> HgvsTranscriptAnnotation:
-        hgvs_c: Optional[SequenceVariant] = None
-        hgvs_p: Optional[SequenceVariant] = None
-        feature_variant: Optional[FeatureVariant] = None
-        try:
-            hgvs_c = hgvs_machinery.assembly_mapper.g_to_c(hgvs_g, tx_ac)
-        except HGVSError:
-            pass
-        else:
-            feature_variant = feature_variant_from_hgvs_c(hgvs_c)
+@dataclass(frozen=True)
+class HgvsTranscriptAnnotation:
+    hgvs_c: Optional[SequenceVariant]
+    hgvs_p: Optional[SequenceVariant]
+    feature_variant: Optional[FeatureVariant]
+
+
+@dataclass(frozen=True)
+class HgvsVariantAnnotation(HgvsTranscriptAnnotation):
+    hgvs_g: SequenceVariant
+    sequence_alteration: SequenceAlteration
+    gene: Optional[str]
+
+    @classmethod
+    def from_simple_variant(cls, hgvs_machinery: HgvsMachinery, variant: SimpleVariant) -> 'HgvsVariantAnnotation':
+        """
+        Create a variant annotation using `biocommons/hgvs` package.
+        Attempts to investigate transcript and protein aberrations and impact resulting from given variant.
+
+        :param hgvs_machinery: hgvs machinery instance.
+        :param variant: simple variant.
+        :return: variant annotation from HGVS.
+        """
+
+        def annotate_transcript(tx_ac: str) -> HgvsTranscriptAnnotation:
+            hgvs_c: Optional[SequenceVariant] = None
+            hgvs_p: Optional[SequenceVariant] = None
+            feature_variant: Optional[FeatureVariant] = None
             try:
-                hgvs_p = hgvs_machinery.assembly_mapper.c_to_p(hgvs_c)
+                hgvs_c = hgvs_machinery.assembly_mapper.g_to_c(hgvs_g, tx_ac)
             except HGVSError:
                 pass
             else:
-                feature_variant = feature_variant_from_hgvs_p(hgvs_p, hgvs_c)
-        return HgvsTranscriptAnnotation(hgvs_c, hgvs_p, feature_variant)
+                feature_variant = feature_variant_from_hgvs_c(hgvs_c)
+                try:
+                    hgvs_p = hgvs_machinery.assembly_mapper.c_to_p(hgvs_c)
+                except HGVSError:
+                    pass
+                else:
+                    feature_variant = feature_variant_from_hgvs_p(hgvs_p, hgvs_c)
+            return HgvsTranscriptAnnotation(hgvs_c, hgvs_p, feature_variant)
 
-    hgvs_g = hgvs_machinery.normalizer_3p.normalize(hgvs_machinery.hgvs_from_simple_variant(variant, vtype='g'))
+        # start by creating a 3'-normalized hgvs.g
+        hgvs_g = hgvs_machinery.normalizer_3p.normalize(hgvs_machinery.hgvs_from_simple_variant(variant, vtype='g'))
 
-    # transcripts and proteins
-    txs_all = hgvs_machinery.assembly_mapper.relevant_transcripts(hgvs_g)
+        # fetch overlapping transcripts
+        txs_all = hgvs_machinery.assembly_mapper.relevant_transcripts(hgvs_g)
 
-    # determine gene
-    gene: Optional[str] = hgvs_machinery.gene_from_transcripts(*txs_all)
+        # determine gene
+        gene: Optional[str] = hgvs_machinery.gene_from_transcripts(*txs_all)
 
-    # annotate coding transcripts (hgvs_g -> hgvs_c -> hgvs_p)
-    tx_anns = tuple(annotate_transcript(tx_ac) for tx_ac in txs_all if is_transcript_coding(tx_ac))
+        # annotate coding transcripts (hgvs_g -> hgvs_c -> hgvs_p)
+        tx_anns = tuple(annotate_transcript(tx_ac) for tx_ac in txs_all if is_transcript_coding(tx_ac))
 
-    # pick tx annotation of max impact or pick the first one (most deleterious)
-    tx_ann: Optional[HgvsTranscriptAnnotation] = max(
-        tx_anns, key=lambda ann: ann.feature_variant.impact if ann.feature_variant else -1) if tx_anns else None
+        # pick tx annotation of max impact or pick the first one (most deleterious)
+        tx_ann: Optional[HgvsTranscriptAnnotation] = max(
+            tx_anns, key=lambda ann: ann.feature_variant.impact if ann.feature_variant else -1) if tx_anns else None
 
-    feature_variant_default: FeatureVariant = FeatureVariant.INTERGENIC if gene else FeatureVariant.INTRONIC
+        feature_variant_default: FeatureVariant = FeatureVariant.INTERGENIC if gene else FeatureVariant.INTRONIC
 
-    return HgvsVariantAnnotation(
-        hgvs_c=getattr(tx_ann, 'hgvs_c', None),
-        hgvs_p=getattr(tx_ann, 'hgvs_p', None),
-        feature_variant=getattr(tx_ann, 'feature_variant', feature_variant_default),
-        hgvs_g=hgvs_g,
-        sequence_alteration=sequence_alteration_from_hgvs_g(hgvs_g),
-        gene=gene)
+        return cls(
+            hgvs_c=getattr(tx_ann, 'hgvs_c', None),
+            hgvs_p=getattr(tx_ann, 'hgvs_p', None),
+            feature_variant=getattr(tx_ann, 'feature_variant', feature_variant_default),
+            hgvs_g=hgvs_g,
+            sequence_alteration=sequence_alteration_from_hgvs_g(hgvs_g),
+            gene=gene)
