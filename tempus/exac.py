@@ -1,3 +1,6 @@
+"""
+ExAC-based annotation functions - using the non-bulk REST API.
+"""
 from dataclasses import dataclass
 from typing import Optional, List
 

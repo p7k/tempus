@@ -1,5 +1,5 @@
 """
-Convenience functions for working with `biocommons/hgvs` package.
+Convenience functions for working with `biocommons/hgvs` package and HGVS-based annotation functions.
 """
 import logging
 from dataclasses import dataclass, field

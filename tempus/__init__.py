@@ -1,7 +1,8 @@
 """
 Model classes and constants.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 from enum import Enum, unique, IntEnum
 
@@ -15,6 +16,7 @@ class SimpleVariant:
     pos: int
     ref: str
     alt: str
+    alt_index: Optional[int] = field(default=None)
 
 
 class Assembly(Enum):
