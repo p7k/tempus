@@ -17,6 +17,6 @@ setup(
         'more-itertools==7.2.0',
         'pyvcf==0.6.8',
     ],
-    test_requires=['pytest'],
+    tests_require=['pytest'],
     python_requires='>=3.7.0'
 )
